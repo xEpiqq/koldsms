@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Inbox, Zap, Rocket, Search, Menu } from "lucide-react";
 
@@ -84,7 +84,17 @@ const initialConversations = [
   },
 ];
 
+// The default export wraps everything in a Suspense boundary
 export default function ChatPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <ChatPageContent />
+    </Suspense>
+  );
+}
+
+// The actual content that uses useSearchParams
+function ChatPageContent() {
   // Retrieve the conversationId from the query string
   const searchParams = useSearchParams();
   const conversationId = searchParams.get("conversationId") || "";
@@ -175,7 +185,10 @@ export default function ChatPage() {
         {/* Tabs (Primary / Others) + Search */}
         <div className="p-4 flex flex-col gap-4">
           <div className="flex gap-4 text-sm">
-            <a href="#" className="border-b-2 border-black pb-1 text-black font-medium">
+            <a
+              href="#"
+              className="border-b-2 border-black pb-1 text-black font-medium"
+            >
               Primary
             </a>
             <a href="#" className="text-gray-500 pb-1">
@@ -229,7 +242,9 @@ export default function ChatPage() {
               <h2 className="text-lg font-semibold text-gray-800">
                 {selectedConversation.subject}
               </h2>
-              <p className="text-sm text-gray-500">From: {selectedConversation.from}</p>
+              <p className="text-sm text-gray-500">
+                From: {selectedConversation.from}
+              </p>
             </div>
             <div className="flex-1 overflow-auto p-4 space-y-4">
               {selectedConversation.messages.map((msg, idx) => (
