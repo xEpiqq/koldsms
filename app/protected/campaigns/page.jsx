@@ -1,14 +1,60 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { createClient } from "@/utils/supabase/client";
 import Papa from "papaparse";
+import { createClient } from "@/utils/supabase/client";
+
+// Catalyst UI Kit imports
+import { Heading } from "@/components/heading";
+import { Subheading } from "@/components/heading";
+import { Text } from "@/components/text";
+import { Button } from "@/components/button";
+import {
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableHeader,
+  TableCell,
+} from "@/components/table";
+import {
+  Fieldset,
+  Legend,
+  FieldGroup,
+  Field,
+  Label,
+  Description,
+} from "@/components/fieldset";
+import { Input } from "@/components/input";
+import { Textarea } from "@/components/textarea";
+import { Checkbox } from "@/components/checkbox";
+import { Badge } from "@/components/badge";
+import {
+  Dropdown,
+  DropdownButton,
+  DropdownItem,
+  DropdownMenu,
+  DropdownLabel,
+} from "@/components/dropdown";
+import {
+  EllipsisHorizontalIcon,
+  PencilIcon,
+  TrashIcon,
+  DocumentDuplicateIcon,
+  ArrowDownTrayIcon,
+  ShareIcon,
+} from "@heroicons/react/16/solid";
+import { useRouter } from "next/navigation";
+
+/**
+ * A single file that shows a campaigns list in a table
+ * with these columns: [select], Name, Status, Progress, Sent, Click, Replied,
+ * plus the wizard for leads/schedule/options.
+ */
 
 export default function CampaignsPage() {
-  // Supabase client in the browser
   const supabase = createClient();
-
-  // Auth user
+  const router = useRouter();
   const [user, setUser] = useState(null);
 
   // Main view states: "list", "new", or "wizard"
@@ -23,14 +69,13 @@ export default function CampaignsPage() {
   // Wizard states
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [campaign, setCampaign] = useState(null);
-
-  // Wizard step: "leads", "schedule", "options"
   const [wizardStep, setWizardStep] = useState("leads");
 
   // leads
   const [leads, setLeads] = useState([]);
-  const [csvData, setCsvData] = useState([]);       // parsed rows
-  const [csvHeaders, setCsvHeaders] = useState([]);   // columns
+  // We still keep CSV data logic around, in case you need it behind "Add leads" eventually
+  const [csvData, setCsvData] = useState([]); // parsed rows
+  const [csvHeaders, setCsvHeaders] = useState([]); // columns
   const [selectedPhoneHeader, setSelectedPhoneHeader] = useState("");
 
   // schedule form
@@ -40,38 +85,75 @@ export default function CampaignsPage() {
     startTime: "09:00",
     endTime: "18:00",
     daysOfWeek: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-    messageContent: "", // single step message
+    messageContent: "",
   });
 
-  /**
-   * On mount, check user, fetch campaigns
-   */
+  // Helpers to convert local times <-> UTC
+  function convertLocalTimeToUTC(timeStr) {
+    const [hours, minutes] = timeStr.split(":").map(Number);
+    const now = new Date();
+    now.setHours(hours, minutes, 0, 0);
+    const utcHours = now.getUTCHours();
+    const utcMinutes = now.getUTCMinutes();
+    return `${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(
+      2,
+      "0"
+    )}`;
+  }
+
+  function convertUTCToLocal(timeStr) {
+    const [utcHours, utcMinutes] = timeStr.split(":").map(Number);
+    const now = new Date();
+    // Create a Date object using UTC time components for today
+    const utcDate = new Date(
+      Date.UTC(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        utcHours,
+        utcMinutes,
+        0
+      )
+    );
+    // Convert to local time
+    const localHours = utcDate.getHours();
+    const localMinutes = utcDate.getMinutes();
+    return `${String(localHours).padStart(2, "0")}:${String(localMinutes).padStart(
+      2,
+      "0"
+    )}`;
+  }
+
+  // On mount, fetch user + campaigns
   useEffect(() => {
     (async () => {
       const {
         data: { user },
-        error,
       } = await supabase.auth.getUser();
-      if (error || !user) {
+
+      if (!user) {
         setUser(null);
         return;
       }
       setUser(user);
 
-      const { data: c } = await supabase
+      // Retrieve campaigns for this user
+      const { data: c, error } = await supabase
         .from("campaigns")
         .select("*")
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
 
+      if (error) {
+        console.error("Error loading campaigns:", error.message);
+        return;
+      }
       setCampaigns(c || []);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /**
-   * Load campaign details if wizard
-   */
+  // If wizard, load the campaign details
   useEffect(() => {
     if (view !== "wizard" || !selectedCampaignId) return;
     loadCampaignDetails(selectedCampaignId);
@@ -94,28 +176,24 @@ export default function CampaignsPage() {
       .eq("campaign_id", campaignId);
     setLeads(leadRows || []);
 
-    // set schedule form from campaign
     if (c) {
       setScheduleForm({
         name: c.name,
         dailyLimit: c.daily_limit,
-        startTime: c.start_time,
-        endTime: c.end_time,
+        startTime: convertUTCToLocal(c.start_time),
+        endTime: convertUTCToLocal(c.end_time),
         daysOfWeek: c.days_of_week || [],
         messageContent: c.message_content || "",
       });
     }
   }
 
-  /**
-   * Create a new campaign
-   */
+  // CREATE a new campaign
   async function createCampaign() {
     if (!newCampaignName.trim()) {
       alert("Please enter a campaign name!");
       return;
     }
-    // create with status 'draft', user_id, name
     const { data, error } = await supabase
       .from("campaigns")
       .insert({
@@ -136,9 +214,7 @@ export default function CampaignsPage() {
     setNewCampaignName("");
   }
 
-  /**
-   * CSV parsing
-   */
+  // CSV parsing (kept here if you want to re-enable it or tie to "Add leads" later)
   async function handleCsvFile(file) {
     if (!file) return;
     try {
@@ -147,7 +223,6 @@ export default function CampaignsPage() {
         header: true,
         skipEmptyLines: true,
       });
-      // Filter out field mismatch errors that occur if a row doesn't have all columns.
       const nonFieldMismatchErrors = parsed.errors.filter(
         (err) => err.code !== "TooFewFields"
       );
@@ -165,7 +240,6 @@ export default function CampaignsPage() {
       setCsvHeaders(headers);
       setCsvData(rows);
 
-      // Auto-select phone header if a common candidate is found
       const phoneHeaderCandidates = ["phone", "phone number", "phone numbers"];
       const foundPhoneHeader = headers.find((header) =>
         phoneHeaderCandidates.includes(header.toLowerCase())
@@ -175,7 +249,7 @@ export default function CampaignsPage() {
       } else {
         setSelectedPhoneHeader("");
       }
-      alert("CSV loaded. Select which column is phone and then import.");
+      alert("CSV loaded. You can handle uploading logic here.");
     } catch (err) {
       console.error(err);
       alert("Error reading CSV file: " + err.message);
@@ -206,7 +280,7 @@ export default function CampaignsPage() {
       });
     }
     if (leadsToInsert.length === 0) {
-      alert("No valid phone numbers found.");
+      alert("No valid phone numbers found in that column.");
       return;
     }
     const { error } = await supabase.from("campaign_leads").insert(leadsToInsert);
@@ -221,9 +295,6 @@ export default function CampaignsPage() {
     alert("Imported leads successfully!");
   }
 
-  /**
-   * handle schedule form
-   */
   function toggleDay(d) {
     setScheduleForm((prev) => {
       const days = new Set(prev.daysOfWeek);
@@ -250,8 +321,8 @@ export default function CampaignsPage() {
       .update({
         name: scheduleForm.name,
         daily_limit: safeDailyLimit,
-        start_time: scheduleForm.startTime,
-        end_time: scheduleForm.endTime,
+        start_time: convertLocalTimeToUTC(scheduleForm.startTime),
+        end_time: convertLocalTimeToUTC(scheduleForm.endTime),
         days_of_week: scheduleForm.daysOfWeek,
         message_content: scheduleForm.messageContent,
         updated_at: new Date().toISOString(),
@@ -279,318 +350,402 @@ export default function CampaignsPage() {
       return;
     }
     await loadCampaignDetails(selectedCampaignId);
+    alert("Campaign launched!");
+  }
+
+  // Helper to map status to a badge color
+  function getStatusColor(status) {
+    switch (status) {
+      case "active":
+        return "green";
+      case "paused":
+        return "orange";
+      case "draft":
+      default:
+        return "zinc";
+    }
   }
 
   if (!user) {
-    return <div className="text-red-500">No user session found.</div>;
+    return (
+      <div style={{ padding: "1rem" }}>
+        <Heading level={2}>No user session found.</Heading>
+      </div>
+    );
   }
 
-  // list view
+  // ----------------------
+  // VIEW: list
+  // ----------------------
   if (view === "list") {
     return (
-      <div className="space-y-4">
-        <h1 className="text-xl font-semibold">Campaigns</h1>
-        <button
-          className="bg-blue-600 text-white px-4 py-1 rounded"
-          onClick={() => setView("new")}
-        >
-          Start New Campaign
-        </button>
-        {campaigns.length === 0 ? (
-          <p className="text-gray-600">No campaigns yet.</p>
-        ) : (
-          <table className="min-w-full mt-2 border-collapse border text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="p-2 text-left">Name</th>
-                <th className="p-2 text-left">Status</th>
-                <th className="p-2 text-left">Daily Limit</th>
-                <th className="p-2 text-left">Created</th>
-                <th className="p-2 text-left">Updated</th>
-                <th className="p-2 text-left"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {campaigns.map((c) => (
-                <tr key={c.id} className="border-b">
-                  <td className="p-2">{c.name}</td>
-                  <td className="p-2">{c.status}</td>
-                  <td className="p-2">{c.daily_limit}</td>
-                  <td className="p-2">{c.created_at}</td>
-                  <td className="p-2">{c.updated_at}</td>
-                  <td className="p-2">
-                    <button
-                      className="underline text-blue-600"
-                      onClick={() => {
-                        setSelectedCampaignId(c.id);
-                        setView("wizard");
-                        setWizardStep("leads");
-                      }}
-                    >
-                      Open
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+      <div style={{ padding: "1rem" }}>
+        <Heading>All Campaigns</Heading>
+        <div style={{ marginTop: "1rem", marginBottom: "1.5rem" }}>
+          <Button color="blue" onClick={() => setView("new")}>
+            Start New Campaign
+          </Button>
+        </div>
+
+        <Table bleed className="[--gutter:--spacing(6)] sm:[--gutter:--spacing(8)]">
+          <TableHead>
+            <TableRow>
+              <TableHeader>
+                <Checkbox aria-label="Select all campaigns" />
+              </TableHeader>
+              <TableHeader>Name</TableHeader>
+              <TableHeader>Status</TableHeader>
+              <TableHeader>Progress</TableHeader>
+              <TableHeader>Sent</TableHeader>
+              <TableHeader>Click</TableHeader>
+              <TableHeader>Replied</TableHeader>
+              <TableHeader>
+                <span className="sr-only">Actions</span>
+              </TableHeader>
+            </TableRow>
+          </TableHead>
+
+          <TableBody>
+            {campaigns.map((c) => {
+              // In a real app, you’d compute these stats from your data:
+              const progress = 0; // e.g. (# leads completed / total leads)
+              const sentCount = 0;
+              const clickCount = 0;
+              const repliedCount = 0;
+
+              return (
+                <TableRow
+                  key={c.id}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => {
+                    setSelectedCampaignId(c.id);
+                    setView("wizard");
+                    setWizardStep("leads");
+                  }}
+                >
+                  {/* Stop event for checkbox cell so it doesn't open wizard */}
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox aria-label={`Select ${c.name}`} />
+                  </TableCell>
+
+                  <TableCell style={{ fontWeight: 500 }}>{c.name}</TableCell>
+                  <TableCell>
+                    {c.status ? (
+                      <Badge color={getStatusColor(c.status)}>{c.status}</Badge>
+                    ) : (
+                      "-"
+                    )}
+                  </TableCell>
+                  <TableCell>{progress > 0 ? `${progress}%` : "-"}</TableCell>
+                  <TableCell>{sentCount > 0 ? sentCount : "-"}</TableCell>
+                  <TableCell>{clickCount > 0 ? clickCount : "-"}</TableCell>
+                  <TableCell>{repliedCount > 0 ? repliedCount : "-"}</TableCell>
+
+                  {/* Stop event in actions cell so it doesn't open wizard */}
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Dropdown>
+                      <DropdownButton plain aria-label="More options">
+                        <EllipsisHorizontalIcon className="size-5" />
+                      </DropdownButton>
+                      <DropdownMenu>
+                        <DropdownItem>
+                          <PencilIcon className="size-4" />
+                          <DropdownLabel>Rename</DropdownLabel>
+                        </DropdownItem>
+                        <DropdownItem>
+                          <TrashIcon className="size-4" />
+                          <DropdownLabel>Delete</DropdownLabel>
+                        </DropdownItem>
+                        <DropdownItem>
+                          <DocumentDuplicateIcon className="size-4" />
+                          <DropdownLabel>Duplicate campaign</DropdownLabel>
+                        </DropdownItem>
+                        <DropdownItem>
+                          <ArrowDownTrayIcon className="size-4" />
+                          <DropdownLabel>Download analytics CSV</DropdownLabel>
+                        </DropdownItem>
+                        <DropdownItem>
+                          <ShareIcon className="size-4" />
+                          <DropdownLabel>Share Campaign</DropdownLabel>
+                        </DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+
+            {campaigns.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={8}>
+                  <em>No campaigns found.</em>
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
       </div>
     );
   }
 
-  // new campaign
+  // ----------------------
+  // VIEW: new
+  // ----------------------
   if (view === "new") {
     return (
-      <div className="space-y-4">
-        <h1 className="text-xl font-semibold">New Campaign</h1>
-        <div>
-          <label className="block mb-1">Campaign Name:</label>
-          <input
-            type="text"
-            className="border p-1"
-            value={newCampaignName}
-            onChange={(e) => setNewCampaignName(e.target.value)}
-          />
-        </div>
-        <div className="flex items-center space-x-4">
-          <button
-            className="bg-blue-600 text-white px-4 py-1 rounded"
-            onClick={createCampaign}
-          >
+      <div style={{ padding: "1rem" }}>
+        <Heading>New Campaign</Heading>
+        <Text className="mt-2">
+          Name your campaign and proceed to the next step to import leads and
+          schedule your SMS broadcast.
+        </Text>
+        <Fieldset style={{ marginTop: "1rem", maxWidth: "500px" }}>
+          <Legend>Campaign Details</Legend>
+          <FieldGroup>
+            <Field>
+              <Label>Campaign Name</Label>
+              <Input
+                name="campaignName"
+                value={newCampaignName}
+                onChange={(e) => setNewCampaignName(e.target.value)}
+              />
+            </Field>
+          </FieldGroup>
+        </Fieldset>
+
+        <div style={{ marginTop: "1.5rem" }}>
+          <Button color="blue" onClick={createCampaign}>
             Create
-          </button>
-          <button className="underline" onClick={() => setView("list")}>
+          </Button>
+          <Button plain onClick={() => setView("list")} style={{ marginLeft: 8 }}>
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     );
   }
 
-  // wizard
+  // ----------------------
+  // VIEW: wizard
+  // ----------------------
   if (view === "wizard" && campaign) {
     return (
-      <div className="space-y-4">
-        <h1 className="text-xl font-semibold">
-          Campaign: {campaign.name} (Status: {campaign.status})
-        </h1>
-        {/* Wizard tabs: leads, schedule, options */}
-        <div className="flex space-x-4 border-b pb-2">
-          <button
-            className={`${wizardStep === "leads" ? "font-bold" : ""} underline text-blue-600`}
-            onClick={() => setWizardStep("leads")}
-          >
-            Leads
-          </button>
-          <button
-            className={`${wizardStep === "schedule" ? "font-bold" : ""} underline text-blue-600`}
-            onClick={() => setWizardStep("schedule")}
-          >
-            Schedule
-          </button>
-          <button
-            className={`${wizardStep === "options" ? "font-bold" : ""} underline text-blue-600`}
-            onClick={() => setWizardStep("options")}
-          >
-            Options
-          </button>
-          <button
-            className="underline text-blue-600 ml-auto"
-            onClick={() => setView("list")}
-          >
-            Back to Campaigns
-          </button>
+      <div style={{ padding: "1rem" }}>
+        {/* Top header with heading, wizard nav, plus a button if step=leads */}
+        <div className="flex w-full flex-wrap items-end justify-between gap-4 border-b border-zinc-950/10 pb-6 dark:border-white/10">
+          <Heading level={2}>
+            Campaign: {campaign.name} (Status: {campaign.status})
+          </Heading>
+          <div className="flex gap-4">
+            <Button
+              outline={wizardStep !== "leads"}
+              color={wizardStep === "leads" ? "blue" : "dark"}
+              onClick={() => setWizardStep("leads")}
+            >
+              Leads
+            </Button>
+            <Button
+              outline={wizardStep !== "schedule"}
+              color={wizardStep === "schedule" ? "blue" : "dark"}
+              onClick={() => setWizardStep("schedule")}
+            >
+              Schedule
+            </Button>
+            <Button
+              outline={wizardStep !== "options"}
+              color={wizardStep === "options" ? "blue" : "dark"}
+              onClick={() => setWizardStep("options")}
+            >
+              Options
+            </Button>
+
+            {wizardStep === "leads" && (
+              <Button
+                color="blue"
+                onClick={() => {
+                  alert("Show your Add leads UI here!");
+                }}
+              >
+                Add leads
+              </Button>
+            )}
+          </div>
         </div>
 
+        {/* Step: Leads */}
         {wizardStep === "leads" && (
-          <div>
-            <h2 className="text-lg font-semibold">Leads</h2>
-            <p className="text-sm text-gray-600 mb-2">
+          <div style={{ marginTop: "2rem" }}>
+            <Subheading>Leads</Subheading>
+            <Text className="mt-2">
               {leads.length} leads in this campaign.
-            </p>
-            <div className="mb-4">
-              <label className="block mb-1">Select a CSV File:</label>
-              <input
-                type="file"
-                accept=".csv"
-                className="border p-1"
-                onChange={(e) => {
-                  if (e.target.files?.length > 0) {
-                    handleCsvFile(e.target.files[0]);
-                    e.target.value = "";
-                  }
-                }}
-              />
-            </div>
-            {csvHeaders.length > 0 && (
-              <div className="mb-4">
-                <label className="block mb-1">
-                  Which column is the phone number?
-                </label>
-                <select
-                  className="border p-1"
-                  value={selectedPhoneHeader}
-                  onChange={(e) => setSelectedPhoneHeader(e.target.value)}
+            </Text>
+
+            {/* Just the leads table, no CSV UI here */}
+            {leads.length > 0 ? (
+              <div style={{ marginTop: "2rem" }}>
+                <Table
+                  bleed
+                  striped
+                  className="[--gutter:--spacing(6)] sm:[--gutter:--spacing(8)] mt-2"
                 >
-                  <option value="">-- Select Column --</option>
-                  {csvHeaders.map((header) => (
-                    <option key={header} value={header}>
-                      {header}
-                    </option>
-                  ))}
-                </select>
+                  <TableHead>
+                    <TableRow>
+                      <TableHeader>Phone</TableHeader>
+                      <TableHeader>Created At</TableHeader>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {leads.map((l) => (
+                      <TableRow key={l.id}>
+                        <TableCell>{l.phone}</TableCell>
+                        <TableCell>{l.created_at}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
-            )}
-            {csvHeaders.length > 0 && (
-              <button
-                className="bg-blue-600 text-white px-4 py-1 rounded"
-                onClick={importLeads}
-              >
-                Import Leads
-              </button>
-            )}
-            {leads.length > 0 && (
-              <table className="min-w-full border-collapse border text-sm mt-6">
-                <thead>
-                  <tr className="border-b">
-                    <th className="p-2 text-left">Phone</th>
-                    <th className="p-2 text-left">Created At</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {leads.map((l) => (
-                    <tr key={l.id} className="border-b">
-                      <td className="p-2">{l.phone}</td>
-                      <td className="p-2">{l.created_at}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            ) : (
+              <Text className="mt-4 text-sm text-gray-600">
+                No leads yet. Click "Add leads" above.
+              </Text>
             )}
           </div>
         )}
 
+        {/* Step: Schedule */}
         {wizardStep === "schedule" && (
-          <div>
-            <h2 className="text-lg font-semibold">
-              Schedule (Single-Step Text)
-            </h2>
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                Campaign Name:
-              </label>
-              <input
-                className="border p-1"
-                value={scheduleForm.name}
-                onChange={(e) =>
-                  setScheduleForm({ ...scheduleForm, name: e.target.value })
-                }
-              />
+          <div style={{ marginTop: "2rem" }}>
+            <Subheading>Schedule (Single-Step Text)</Subheading>
+            <Fieldset style={{ marginTop: "1.5rem", maxWidth: 500 }}>
+              <Legend>Campaign Settings</Legend>
+              <FieldGroup>
+                <Field>
+                  <Label>Campaign Name</Label>
+                  <Input
+                    name="scheduleName"
+                    value={scheduleForm.name}
+                    onChange={(e) =>
+                      setScheduleForm({ ...scheduleForm, name: e.target.value })
+                    }
+                  />
+                </Field>
+
+                <Field>
+                  <Label>Daily Limit</Label>
+                  <Input
+                    type="number"
+                    value={scheduleForm.dailyLimit}
+                    onChange={(e) =>
+                      setScheduleForm({
+                        ...scheduleForm,
+                        dailyLimit: Number(e.target.value),
+                      })
+                    }
+                  />
+                  <Description>
+                    Max texts per day. Actual max depends on available backends.
+                  </Description>
+                </Field>
+
+                <Field>
+                  <Label>Start Time</Label>
+                  <Input
+                    type="time"
+                    value={scheduleForm.startTime}
+                    onChange={(e) =>
+                      setScheduleForm({
+                        ...scheduleForm,
+                        startTime: e.target.value,
+                      })
+                    }
+                  />
+                </Field>
+
+                <Field>
+                  <Label>End Time</Label>
+                  <Input
+                    type="time"
+                    value={scheduleForm.endTime}
+                    onChange={(e) =>
+                      setScheduleForm({
+                        ...scheduleForm,
+                        endTime: e.target.value,
+                      })
+                    }
+                  />
+                </Field>
+
+                <Field>
+                  <Label>Days of Week</Label>
+                  <div
+                    style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}
+                  >
+                    {[
+                      "Monday",
+                      "Tuesday",
+                      "Wednesday",
+                      "Thursday",
+                      "Friday",
+                      "Saturday",
+                      "Sunday",
+                    ].map((d) => {
+                      const checked = scheduleForm.daysOfWeek.includes(d);
+                      return (
+                        <label
+                          key={d}
+                          style={{ display: "flex", alignItems: "center" }}
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onChange={() => toggleDay(d)}
+                          />
+                          <span style={{ marginLeft: 4 }}>{d}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </Field>
+
+                <Field>
+                  <Label>Message Content</Label>
+                  <Textarea
+                    rows={3}
+                    value={scheduleForm.messageContent}
+                    onChange={(e) =>
+                      setScheduleForm({
+                        ...scheduleForm,
+                        messageContent: e.target.value,
+                      })
+                    }
+                  />
+                  <Description>
+                    This is the single SMS message to send to each lead.
+                  </Description>
+                </Field>
+              </FieldGroup>
+            </Fieldset>
+            <div style={{ marginTop: "1.5rem" }}>
+              <Button color="blue" onClick={saveSchedule}>
+                Save Schedule
+              </Button>
             </div>
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                Daily Limit:
-              </label>
-              <input
-                className="border p-1"
-                type="number"
-                value={scheduleForm.dailyLimit}
-                onChange={(e) =>
-                  setScheduleForm({
-                    ...scheduleForm,
-                    dailyLimit: Number(e.target.value),
-                  })
-                }
-              />
-            </div>
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                Start Time:
-              </label>
-              <input
-                className="border p-1"
-                type="time"
-                value={scheduleForm.startTime}
-                onChange={(e) =>
-                  setScheduleForm({ ...scheduleForm, startTime: e.target.value })
-                }
-              />
-            </div>
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                End Time:
-              </label>
-              <input
-                className="border p-1"
-                type="time"
-                value={scheduleForm.endTime}
-                onChange={(e) =>
-                  setScheduleForm({ ...scheduleForm, endTime: e.target.value })
-                }
-              />
-            </div>
-            <div className="mb-4">
-              <p className="font-medium">Days of Week:</p>
-              {[
-                "Monday",
-                "Tuesday",
-                "Wednesday",
-                "Thursday",
-                "Friday",
-                "Saturday",
-                "Sunday",
-              ].map((d) => {
-                const checked = scheduleForm.daysOfWeek.includes(d);
-                return (
-                  <label key={d} className="block">
-                    <input
-                      type="checkbox"
-                      className="mr-2"
-                      checked={checked}
-                      onChange={() => toggleDay(d)}
-                    />
-                    {d}
-                  </label>
-                );
-              })}
-            </div>
-            <div className="mb-4">
-              <label className="block mb-1 font-medium">
-                Message Content (Single Text):
-              </label>
-              <textarea
-                className="border p-1 w-full"
-                rows={3}
-                value={scheduleForm.messageContent}
-                onChange={(e) =>
-                  setScheduleForm({
-                    ...scheduleForm,
-                    messageContent: e.target.value,
-                  })
-                }
-              />
-            </div>
-            <button
-              className="bg-blue-600 text-white px-4 py-1 rounded"
-              onClick={saveSchedule}
-            >
-              Save Schedule
-            </button>
           </div>
         )}
 
+        {/* Step: Options */}
         {wizardStep === "options" && (
-          <div>
-            <h2 className="text-lg font-semibold">Options</h2>
-            <p className="mb-4">Current status: {campaign.status}</p>
-            <button
-              className="bg-green-600 text-white px-4 py-1 rounded"
-              disabled={campaign.status === "active"}
-              onClick={launchCampaign}
-            >
-              Launch Campaign
-            </button>
+          <div style={{ marginTop: "2rem" }}>
+            <Subheading>Options</Subheading>
+            <Text className="mt-2">Current status: {campaign.status}</Text>
+            <div style={{ marginTop: "1rem" }}>
+              <Button
+                color="green"
+                disabled={campaign.status === "active"}
+                onClick={launchCampaign}
+              >
+                Launch Campaign
+              </Button>
+            </div>
           </div>
         )}
       </div>
