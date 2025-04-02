@@ -30,8 +30,10 @@ export default function RootLayout({
 }>) {
   return (
     <html>
-      <body>
-        {children}
+      <body cz-shortcut-listen="true">
+      <div>
+      {children}
+      </div>
       </body>
     </html>
   );
