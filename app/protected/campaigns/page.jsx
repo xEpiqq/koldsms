@@ -1,3 +1,4 @@
+// /app/protected/campaigns/page.jsx
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -37,20 +38,26 @@ import {
   DropdownLabel,
 } from "@/components/dropdown";
 import {
+  Navbar,
+  NavbarDivider,
+  NavbarItem,
+  NavbarLabel,
+  NavbarSection,
+  NavbarSpacer,
+} from "@/components/navbar";
+
+import {
   EllipsisHorizontalIcon,
   PencilIcon,
   TrashIcon,
   DocumentDuplicateIcon,
   ArrowDownTrayIcon,
   ShareIcon,
+  PlusIcon,
 } from "@heroicons/react/16/solid";
-import { useRouter } from "next/navigation";
+import { InboxIcon, MagnifyingGlassIcon } from "@heroicons/react/20/solid";
 
-/**
- * A single file that shows a campaigns list in a table
- * with these columns: [select], Name, Status, Progress, Sent, Click, Replied,
- * plus the wizard for leads/schedule/options.
- */
+import { useRouter } from "next/navigation";
 
 export default function CampaignsPage() {
   const supabase = createClient();
@@ -69,16 +76,28 @@ export default function CampaignsPage() {
   // Wizard states
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [campaign, setCampaign] = useState(null);
+  // Wizard steps
   const [wizardStep, setWizardStep] = useState("leads");
 
   // leads
   const [leads, setLeads] = useState([]);
-  // We still keep CSV data logic around, in case you need it behind "Add leads" eventually
+  // CSV upload states
   const [csvData, setCsvData] = useState([]); // parsed rows
   const [csvHeaders, setCsvHeaders] = useState([]); // columns
-  const [selectedPhoneHeader, setSelectedPhoneHeader] = useState("");
+  // New state for dynamic mapping of CSV columns to DB fields
+  const [csvMapping, setCsvMapping] = useState({
+    phone: "",
+    first_name: "",
+    last_name: "",
+    company_name: "",
+  });
+  // Toggle for showing CSV upload UI
+  const [showCsvUploadForm, setShowCsvUploadForm] = useState(false);
 
-  // schedule form
+  // Store the user’s selections of leads for deletion
+  const [selectedLeadIds, setSelectedLeadIds] = useState([]);
+
+  // schedule & sequence form
   const [scheduleForm, setScheduleForm] = useState({
     name: "",
     dailyLimit: 100,
@@ -176,13 +195,17 @@ export default function CampaignsPage() {
       .eq("campaign_id", campaignId);
     setLeads(leadRows || []);
 
+    // reset selectedLeadIds
+    setSelectedLeadIds([]);
+
     if (c) {
       setScheduleForm({
-        name: c.name,
-        dailyLimit: c.daily_limit,
-        startTime: convertUTCToLocal(c.start_time),
-        endTime: convertUTCToLocal(c.end_time),
-        daysOfWeek: c.days_of_week || [],
+        name: c.name || "",
+        dailyLimit: c.daily_limit || 100,
+        startTime: c.start_time ? convertUTCToLocal(c.start_time) : "09:00",
+        endTime: c.end_time ? convertUTCToLocal(c.end_time) : "18:00",
+        daysOfWeek:
+          c.days_of_week || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
         messageContent: c.message_content || "",
       });
     }
@@ -213,6 +236,7 @@ export default function CampaignsPage() {
     setNewCampaignName("");
   }
 
+  // Handle CSV file upload and set dynamic mapping defaults
   async function handleCsvFile(file) {
     if (!file) return;
     try {
@@ -238,47 +262,100 @@ export default function CampaignsPage() {
       setCsvHeaders(headers);
       setCsvData(rows);
 
+      // Attempt to auto-detect column mapping
+      let detectedMapping = {
+        phone: "",
+        first_name: "",
+        last_name: "",
+        company_name: "",
+      };
       const phoneHeaderCandidates = ["phone", "phone number", "phone numbers"];
-      const foundPhoneHeader = headers.find((header) =>
-        phoneHeaderCandidates.includes(header.toLowerCase())
-      );
-      if (foundPhoneHeader) {
-        setSelectedPhoneHeader(foundPhoneHeader);
-      } else {
-        setSelectedPhoneHeader("");
-      }
-      alert("CSV loaded. You can handle uploading logic here.");
+      const firstNameCandidates = ["first name", "firstname", "first"];
+      const lastNameCandidates = ["last name", "lastname", "last"];
+      const companyCandidates = ["company", "company name", "business"];
+
+      detectedMapping.phone =
+        headers.find((header) =>
+          phoneHeaderCandidates.includes(header.toLowerCase())
+        ) || "";
+      detectedMapping.first_name =
+        headers.find((header) =>
+          firstNameCandidates.includes(header.toLowerCase())
+        ) || "";
+      detectedMapping.last_name =
+        headers.find((header) =>
+          lastNameCandidates.includes(header.toLowerCase())
+        ) || "";
+      detectedMapping.company_name =
+        headers.find((header) =>
+          companyCandidates.includes(header.toLowerCase())
+        ) || "";
+
+      setCsvMapping(detectedMapping);
+
+      alert("CSV loaded. Please adjust the mapping if needed.");
     } catch (err) {
       console.error(err);
       alert("Error reading CSV file: " + err.message);
     }
   }
 
+  // Validate that phone contains only digits
+  function validatePhone(phone) {
+    return /^[0-9]+$/.test(phone);
+  }
+
+  // Import leads using the dynamic CSV mapping; only valid phone numbers are inserted.
   async function importLeads() {
     if (!selectedCampaignId) {
       alert("No campaign selected.");
-      return;
-    }
-    if (!selectedPhoneHeader) {
-      alert("Please select the phone column first.");
       return;
     }
     if (!csvData || csvData.length === 0) {
       alert("No CSV data loaded.");
       return;
     }
+    if (!csvMapping.phone) {
+      alert("Please select the phone column in the mapping.");
+      return;
+    }
     const leadsToInsert = [];
+    let invalidCount = 0;
     for (const row of csvData) {
-      const phoneValue = row[selectedPhoneHeader]?.toString().trim();
-      if (!phoneValue) continue;
+      const phoneValue = row[csvMapping.phone]?.toString().trim();
+      if (!phoneValue || !validatePhone(phoneValue)) {
+        invalidCount++;
+        continue;
+      }
+      const firstName = csvMapping.first_name
+        ? row[csvMapping.first_name]?.toString().trim() || ""
+        : "";
+      const lastName = csvMapping.last_name
+        ? row[csvMapping.last_name]?.toString().trim() || ""
+        : "";
+      const companyName = csvMapping.company_name
+        ? row[csvMapping.company_name]?.toString().trim() || ""
+        : "";
+      // Remove mapped columns from personalization
+      const personal = { ...row };
+      if (csvMapping.phone) delete personal[csvMapping.phone];
+      if (csvMapping.first_name) delete personal[csvMapping.first_name];
+      if (csvMapping.last_name) delete personal[csvMapping.last_name];
+      if (csvMapping.company_name) delete personal[csvMapping.company_name];
+
       leadsToInsert.push({
         campaign_id: selectedCampaignId,
         phone: phoneValue,
-        personalization: row,
+        first_name: firstName,
+        last_name: lastName,
+        company_name: companyName,
+        personalization: personal,
+        created_at: new Date().toISOString(),
+        stop_sending: false,
       });
     }
     if (leadsToInsert.length === 0) {
-      alert("No valid phone numbers found in that column.");
+      alert(`No valid leads found. ${invalidCount} invalid phone numbers.`);
       return;
     }
     const { error } = await supabase.from("campaign_leads").insert(leadsToInsert);
@@ -287,12 +364,24 @@ export default function CampaignsPage() {
       return;
     }
     await loadCampaignDetails(selectedCampaignId);
+    // Clear CSV data and mapping, and hide the upload UI
     setCsvData([]);
     setCsvHeaders([]);
-    setSelectedPhoneHeader("");
-    alert("Imported leads successfully!");
+    setCsvMapping({
+      phone: "",
+      first_name: "",
+      last_name: "",
+      company_name: "",
+    });
+    setShowCsvUploadForm(false);
+    let message = "Imported leads successfully!";
+    if (invalidCount > 0) {
+      message += ` Skipped ${invalidCount} rows due to invalid phone numbers.`;
+    }
+    alert(message);
   }
 
+  // Toggle day selection
   function toggleDay(d) {
     setScheduleForm((prev) => {
       const days = new Set(prev.daysOfWeek);
@@ -305,6 +394,7 @@ export default function CampaignsPage() {
     });
   }
 
+  // Save the schedule (without message content, which is handled in "sequence")
   async function saveSchedule() {
     // check how many backends the user has
     const { data: backends } = await supabase
@@ -314,23 +404,41 @@ export default function CampaignsPage() {
     const maxAllowed = (backends?.length || 0) * 100;
     const safeDailyLimit = Math.min(scheduleForm.dailyLimit, maxAllowed);
 
+    const updates = {
+      name: scheduleForm.name,
+      daily_limit: safeDailyLimit,
+      start_time: convertLocalTimeToUTC(scheduleForm.startTime),
+      end_time: convertLocalTimeToUTC(scheduleForm.endTime),
+      days_of_week: scheduleForm.daysOfWeek,
+      updated_at: new Date().toISOString(),
+    };
+
     const { error } = await supabase
       .from("campaigns")
-      .update({
-        name: scheduleForm.name,
-        daily_limit: safeDailyLimit,
-        start_time: convertLocalTimeToUTC(scheduleForm.startTime),
-        end_time: convertLocalTimeToUTC(scheduleForm.endTime),
-        days_of_week: scheduleForm.daysOfWeek,
-        message_content: scheduleForm.messageContent,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updates)
       .eq("id", selectedCampaignId);
     if (error) {
       alert("Error updating schedule: " + error.message);
       return;
     }
     alert("Schedule saved!");
+    await loadCampaignDetails(selectedCampaignId);
+  }
+
+  // Save the message content in the separate "sequence" step
+  async function saveSequence() {
+    const { error } = await supabase
+      .from("campaigns")
+      .update({
+        message_content: scheduleForm.messageContent,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", selectedCampaignId);
+    if (error) {
+      alert("Error updating sequence: " + error.message);
+      return;
+    }
+    alert("Sequence saved!");
     await loadCampaignDetails(selectedCampaignId);
   }
 
@@ -409,11 +517,10 @@ export default function CampaignsPage() {
     if (!confirmed) return;
 
     try {
-      // Optionally delete leads and sends. 
-      // If your DB is set up with ON CASCADE, just deleting the campaign might be enough.
-      // Here, let's do it explicitly:
+      // Delete leads and sends explicitly
       await supabase.from("campaign_leads").delete().eq("campaign_id", c.id);
       await supabase.from("campaign_sends").delete().eq("campaign_id", c.id);
+
       const { error } = await supabase.from("campaigns").delete().eq("id", c.id);
       if (error) {
         alert("Error deleting campaign: " + error.message);
@@ -496,7 +603,7 @@ export default function CampaignsPage() {
       const { data: refreshed, error: refreshErr } = await supabase
         .from("campaigns")
         .select("*")
-        .eq("user_id", user.id)
+        .eq("user_id", original.user_id)
         .order("created_at", { ascending: false });
       if (!refreshErr && refreshed) {
         setCampaigns(refreshed);
@@ -544,12 +651,43 @@ export default function CampaignsPage() {
 
   // 5) Share campaign
   function shareCampaign(c) {
-    // For a real app, you might generate a public link or a shared token.
-    // We'll just do a quick alert with an example link
     alert(
       `Share link for campaign "${c.name}":\n` +
         `https://yourapp.example.com/public-campaign?c=${c.id}`
     );
+  }
+
+  // Toggle selection of a single lead (for batch deletion)
+  function toggleLeadSelection(leadId) {
+    setSelectedLeadIds((prev) => {
+      if (prev.includes(leadId)) {
+        return prev.filter((id) => id !== leadId);
+      } else {
+        return [...prev, leadId];
+      }
+    });
+  }
+
+  // Delete all selected leads
+  async function handleDeleteSelectedLeads() {
+    if (selectedLeadIds.length === 0) {
+      alert("No leads selected.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${selectedLeadIds.length} lead(s)?`
+    );
+    if (!confirmed) return;
+    const { error } = await supabase
+      .from("campaign_leads")
+      .delete()
+      .in("id", selectedLeadIds);
+    if (error) {
+      alert("Error deleting selected leads: " + error.message);
+      return;
+    }
+    await loadCampaignDetails(selectedCampaignId);
+    alert(`${selectedLeadIds.length} lead(s) deleted.`);
   }
 
   if (!user) {
@@ -711,8 +849,8 @@ export default function CampaignsPage() {
       <div style={{ padding: "1rem" }}>
         <Heading>New Campaign</Heading>
         <Text className="mt-2">
-          Name your campaign and proceed to the next step to import leads and
-          schedule your SMS broadcast.
+          Name your campaign and proceed to the next step to import leads, set up
+          your sequence, and schedule your SMS broadcast.
         </Text>
         <Fieldset style={{ marginTop: "1rem", maxWidth: "500px" }}>
           <Legend>Campaign Details</Legend>
@@ -746,52 +884,196 @@ export default function CampaignsPage() {
   if (view === "wizard" && campaign) {
     return (
       <div style={{ padding: "1rem" }}>
-        {/* Top header with heading, wizard nav, plus a button if step=leads */}
-        <div className="flex w-full flex-wrap items-end justify-between gap-4 border-b border-zinc-950/10 pb-6 dark:border-white/10">
-          <Heading level={2}>
-            Campaign: {campaign.name} (Status: {campaign.status})
-          </Heading>
-          <div className="flex gap-4">
-            <Button
-              outline={wizardStep !== "leads"}
-              color={wizardStep === "leads" ? "blue" : "dark"}
+        <Heading level={2}>
+          Campaign: {campaign.name} (Status: {campaign.status})
+        </Heading>
+
+        {/* Navigation for wizard steps, plus leads actions if leads step */}
+        <Navbar className="mt-6">
+          <NavbarSection>
+            <NavbarItem
+              current={wizardStep === "leads"}
               onClick={() => setWizardStep("leads")}
             >
               Leads
-            </Button>
-            <Button
-              outline={wizardStep !== "schedule"}
-              color={wizardStep === "schedule" ? "blue" : "dark"}
+            </NavbarItem>
+            <NavbarItem
+              current={wizardStep === "sequence"}
+              onClick={() => setWizardStep("sequence")}
+            >
+              Sequence
+            </NavbarItem>
+            <NavbarItem
+              current={wizardStep === "schedule"}
               onClick={() => setWizardStep("schedule")}
             >
               Schedule
-            </Button>
-            <Button
-              outline={wizardStep !== "options"}
-              color={wizardStep === "options" ? "blue" : "dark"}
+            </NavbarItem>
+            <NavbarItem
+              current={wizardStep === "options"}
               onClick={() => setWizardStep("options")}
             >
               Options
-            </Button>
-
+            </NavbarItem>
+          </NavbarSection>
+          <NavbarSpacer />
+          <NavbarSection>
             {wizardStep === "leads" && (
-              <Button
-                color="blue"
-                onClick={() => {
-                  alert("Show your Add leads UI here!");
-                }}
-              >
-                Add leads
-              </Button>
+              <>
+                <NavbarItem
+                  onClick={handleDeleteSelectedLeads}
+                  aria-label="Delete selected leads"
+                >
+                  <TrashIcon className="size-4" />
+                </NavbarItem>
+                <NavbarItem
+                  onClick={() => setShowCsvUploadForm(true)}
+                  aria-label="Add leads"
+                >
+                  <PlusIcon className="size-4" />
+                </NavbarItem>
+              </>
             )}
-          </div>
-        </div>
+          </NavbarSection>
+        </Navbar>
 
         {/* Step: Leads */}
         {wizardStep === "leads" && (
           <div style={{ marginTop: "2rem" }}>
-            <Subheading>Leads</Subheading>
-            <Text className="mt-2">{leads.length} leads in this campaign.</Text>
+            <Text>{leads.length} leads in this campaign.</Text>
+
+            {/* CSV Upload & Mapping UI */}
+            {showCsvUploadForm && (
+              <div
+                style={{
+                  marginTop: "2rem",
+                  border: "1px solid #ccc",
+                  padding: "1rem",
+                  borderRadius: "4px",
+                }}
+              >
+                <Heading level={4}>Upload CSV Leads</Heading>
+                <Fieldset style={{ marginTop: "1rem" }}>
+                  <FieldGroup>
+                    <Field>
+                      <Label>CSV File</Label>
+                      <Input
+                        type="file"
+                        accept=".csv"
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files.length > 0) {
+                            handleCsvFile(e.target.files[0]);
+                          }
+                        }}
+                      />
+                    </Field>
+                  </FieldGroup>
+                </Fieldset>
+
+                {csvHeaders.length > 0 && (
+                  <div style={{ marginTop: "1rem" }}>
+                    <Heading level={5}>Map CSV columns to database fields:</Heading>
+
+                    <Fieldset style={{ marginTop: "0.5rem" }}>
+                      <FieldGroup>
+                        <Field>
+                          <Label>Phone Number</Label>
+                          <select
+                            value={csvMapping.phone}
+                            onChange={(e) =>
+                              setCsvMapping({
+                                ...csvMapping,
+                                phone: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">--Select Column--</option>
+                            {csvHeaders.map((header) => (
+                              <option key={header} value={header}>
+                                {header}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+
+                        <Field>
+                          <Label>First Name</Label>
+                          <select
+                            value={csvMapping.first_name}
+                            onChange={(e) =>
+                              setCsvMapping({
+                                ...csvMapping,
+                                first_name: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">--Select Column--</option>
+                            {csvHeaders.map((header) => (
+                              <option key={header} value={header}>
+                                {header}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+
+                        <Field>
+                          <Label>Last Name</Label>
+                          <select
+                            value={csvMapping.last_name}
+                            onChange={(e) =>
+                              setCsvMapping({
+                                ...csvMapping,
+                                last_name: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">--Select Column--</option>
+                            {csvHeaders.map((header) => (
+                              <option key={header} value={header}>
+                                {header}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+
+                        <Field>
+                          <Label>Company Name</Label>
+                          <select
+                            value={csvMapping.company_name}
+                            onChange={(e) =>
+                              setCsvMapping({
+                                ...csvMapping,
+                                company_name: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">--Select Column--</option>
+                            {csvHeaders.map((header) => (
+                              <option key={header} value={header}>
+                                {header}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </FieldGroup>
+                    </Fieldset>
+                  </div>
+                )}
+
+                <div style={{ marginTop: "1rem" }}>
+                  <Button color="blue" onClick={importLeads}>
+                    Import Leads
+                  </Button>
+                  <Button
+                    plain
+                    onClick={() => setShowCsvUploadForm(false)}
+                    style={{ marginLeft: "1rem" }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {leads.length > 0 ? (
               <div style={{ marginTop: "2rem" }}>
@@ -802,14 +1084,28 @@ export default function CampaignsPage() {
                 >
                   <TableHead>
                     <TableRow>
+                      <TableHeader>Select</TableHeader>
                       <TableHeader>Phone</TableHeader>
+                      <TableHeader>First Name</TableHeader>
+                      <TableHeader>Last Name</TableHeader>
+                      <TableHeader>Company Name</TableHeader>
                       <TableHeader>Created At</TableHeader>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {leads.map((l) => (
                       <TableRow key={l.id}>
+                        <TableCell>
+                          <Checkbox
+                            aria-label={`Select lead ${l.id}`}
+                            checked={selectedLeadIds.includes(l.id)}
+                            onChange={() => toggleLeadSelection(l.id)}
+                          />
+                        </TableCell>
                         <TableCell>{l.phone}</TableCell>
+                        <TableCell>{l.first_name || "-"}</TableCell>
+                        <TableCell>{l.last_name || "-"}</TableCell>
+                        <TableCell>{l.company_name || "-"}</TableCell>
                         <TableCell>{l.created_at}</TableCell>
                       </TableRow>
                     ))}
@@ -818,16 +1114,49 @@ export default function CampaignsPage() {
               </div>
             ) : (
               <Text className="mt-4 text-sm text-gray-600">
-                No leads yet. Click "Add leads" above.
+                No leads yet. Click the plus icon above to add leads.
               </Text>
             )}
+          </div>
+        )}
+
+        {/* Step: Sequence */}
+        {wizardStep === "sequence" && (
+          <div style={{ marginTop: "2rem" }}>
+            <Subheading>Sequence</Subheading>
+            <Fieldset style={{ marginTop: "1.5rem", maxWidth: 500 }}>
+              <Legend>Message Settings</Legend>
+              <FieldGroup>
+                <Field>
+                  <Label>Message Content</Label>
+                  <Textarea
+                    rows={3}
+                    value={scheduleForm.messageContent}
+                    onChange={(e) =>
+                      setScheduleForm({
+                        ...scheduleForm,
+                        messageContent: e.target.value,
+                      })
+                    }
+                  />
+                  <Description>
+                    This is the single SMS message to send to each lead.
+                  </Description>
+                </Field>
+              </FieldGroup>
+            </Fieldset>
+            <div style={{ marginTop: "1.5rem" }}>
+              <Button color="blue" onClick={saveSequence}>
+                Save Sequence
+              </Button>
+            </div>
           </div>
         )}
 
         {/* Step: Schedule */}
         {wizardStep === "schedule" && (
           <div style={{ marginTop: "2rem" }}>
-            <Subheading>Schedule (Single-Step Text)</Subheading>
+            <Subheading>Schedule</Subheading>
             <Fieldset style={{ marginTop: "1.5rem", maxWidth: 500 }}>
               <Legend>Campaign Settings</Legend>
               <FieldGroup>
@@ -889,9 +1218,7 @@ export default function CampaignsPage() {
 
                 <Field>
                   <Label>Days of Week</Label>
-                  <div
-                    style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}
-                  >
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem" }}>
                     {[
                       "Monday",
                       "Tuesday",
@@ -916,23 +1243,6 @@ export default function CampaignsPage() {
                       );
                     })}
                   </div>
-                </Field>
-
-                <Field>
-                  <Label>Message Content</Label>
-                  <Textarea
-                    rows={3}
-                    value={scheduleForm.messageContent}
-                    onChange={(e) =>
-                      setScheduleForm({
-                        ...scheduleForm,
-                        messageContent: e.target.value,
-                      })
-                    }
-                  />
-                  <Description>
-                    This is the single SMS message to send to each lead.
-                  </Description>
                 </Field>
               </FieldGroup>
             </Fieldset>
