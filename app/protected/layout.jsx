@@ -49,33 +49,28 @@ export default async function ProtectedLayout({ children }) {
     <StackedLayout
       navbar={
         <Navbar>
-          {/* Left logo + text replaced with your files using plain img tags */}
-          <NavbarItem className="max-lg:hidden">
+          {/* Left logo + text */}
+          <NavbarItem>
             <img src="/koldsmslogo.png" alt="koldsms logo" className="h-6" />
             <NavbarLabel>
-              <img
-                src="/koldsmslogotext.png"
-                alt="koldsms"
-                className="h-4"
-              />
+              <img src="/koldsmslogotext.png" alt="koldsms" className="h-4" />
             </NavbarLabel>
           </NavbarItem>
           <NavbarDivider className="max-lg:hidden" />
+
           {/* Navigation links */}
           <NavbarSection className="max-lg:hidden">
-            <NavbarItem href="/protected/campaigns">
-              Campaigns
-            </NavbarItem>
-            <NavbarItem href="/protected/unibox">
-              Inbox
-            </NavbarItem>
+            <NavbarItem href="/protected/unibox">Inbox</NavbarItem>
+            <NavbarItem href="/protected/campaigns">Campaigns</NavbarItem>
           </NavbarSection>
+
           <NavbarSpacer />
+
           {/* User dropdown */}
           <NavbarSection>
             <Dropdown>
               <DropdownButton as={NavbarItem}>
-                <img src="/profile-photo.jpg" alt="profile" className="h-8" />
+                <img src="/chud.png" alt="profile" className="h-8 rounded-4xl" />
               </DropdownButton>
               <DropdownMenu className="min-w-64" anchor="bottom end">
                 <DropdownItem href="/my-profile">
@@ -108,33 +103,24 @@ export default async function ProtectedLayout({ children }) {
       sidebar={
         <Sidebar>
           <SidebarHeader>
-            {/* Sidebar logo + text replaced with your files using plain img tags */}
             <SidebarItem className="lg:mb-2.5">
               <img src="/koldsmslogo.png" alt="koldsms logo" className="h-8" />
               <SidebarLabel>
-                <img
-                  src="/koldsmslogotext.png"
-                  alt="koldsms"
-                  className="h-4"
-                />
+                <img src="/koldsmslogotext.png" alt="koldsms" className="h-4" />
               </SidebarLabel>
             </SidebarItem>
           </SidebarHeader>
           <SidebarBody>
-            {/* Sidebar navigation links */}
             <SidebarSection>
-              <SidebarItem href="/protected/campaigns">
-                Campaigns
-              </SidebarItem>
-              <SidebarItem href="/protected/unibox">
-                Inbox
-              </SidebarItem>
+              <SidebarItem href="/protected/campaigns">Campaigns</SidebarItem>
+              <SidebarItem href="/protected/unibox">Inbox</SidebarItem>
             </SidebarSection>
           </SidebarBody>
         </Sidebar>
       }
     >
-      {children}
+      {/* Remove any padding or margin from the primary content container */}
+      <div className="m-0">{children}</div>
     </StackedLayout>
   );
 }

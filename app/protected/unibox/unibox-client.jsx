@@ -1,20 +1,24 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Heading } from "@/components/heading";
+import { Text } from "@/components/text";
+import { Fieldset, FieldGroup, Field, Label } from "@/components/fieldset";
+import { Input } from "@/components/input";
+import { Textarea } from "@/components/textarea";
+import { Button } from "@/components/button";
 
-// userBackends: an array of objects like:
-//   { id: number, base_url: string, created_at: string, ... }
+/**
+ * userBackends: Array of backend objects: { id, base_url, created_at, ... }
+ */
 export default function UniboxClient({ userBackends }) {
-  // "previews" is our unified inbox array
+  // Combined conversation previews
   const [previews, setPreviews] = useState([]);
-
-  // Which conversation is open?
+  // Which phone/which backend is selected?
   const [selectedPhone, setSelectedPhone] = useState("");
   const [selectedBackendIndex, setSelectedBackendIndex] = useState(null);
-
   // Loaded conversation messages
   const [conversation, setConversation] = useState([]);
-
   // For status messages
   const [status, setStatus] = useState("");
 
@@ -23,19 +27,20 @@ export default function UniboxClient({ userBackends }) {
   const [newPhoneNumber, setNewPhoneNumber] = useState("");
   const [newMessage, setNewMessage] = useState("");
 
+  // Controls whether we're showing the "Send Message" form
+  const [showNewForm, setShowNewForm] = useState(false);
+
   /**
    * Load the unified inbox from all userBackends.
    */
   async function loadInbox() {
     try {
-      // For each backend, fetch /messages
       const results = await Promise.all(
         userBackends.map(async (b, index) => {
           const r = await fetch(`${b.base_url}/messages`);
           if (!r.ok) throw new Error(await r.text());
           const data = await r.json();
-          // data is an array of { phoneNumber, snippet, timestamp, unread, fromYou }
-          // Attach the "backendIndex" so we know which server it belongs to
+          // Each item: { phoneNumber, snippet, timestamp, unread, fromYou }
           return data.map((item) => ({
             ...item,
             backendIndex: index,
@@ -43,39 +48,31 @@ export default function UniboxClient({ userBackends }) {
           }));
         })
       );
-      // Flatten into a single array
-      const combined = results.flat();
-      setPreviews(combined);
+      setPreviews(results.flat());
     } catch (err) {
       console.error("Inbox error:", err.message);
     }
   }
 
-  /**
-   * On mount, and every 5s, load the inbox.
-   */
+  // Initially + refresh every 5s
   useEffect(() => {
-    if (!userBackends || userBackends.length === 0) return;
+    if (!userBackends?.length) return;
     loadInbox();
     const id = setInterval(loadInbox, 5000);
     return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userBackends]);
 
-  /**
-   * If the user selects a phone + backend,
-   * we load the conversation from that backend.
-   */
+  // Load selected conversation every 5s
   useEffect(() => {
-    if (!selectedPhone || selectedBackendIndex === null) {
+    if (!selectedPhone || selectedBackendIndex == null) {
       setConversation([]);
       return;
     }
-
     async function loadConversation() {
       try {
         const chosenBackend = userBackends[selectedBackendIndex];
         if (!chosenBackend) return;
-
         const r = await fetch(
           `${chosenBackend.base_url}/conversation?phone=${encodeURIComponent(
             selectedPhone
@@ -88,26 +85,27 @@ export default function UniboxClient({ userBackends }) {
         console.error("Conversation error:", err.message);
       }
     }
-
     loadConversation();
     const id = setInterval(loadConversation, 5000);
     return () => clearInterval(id);
   }, [selectedPhone, selectedBackendIndex, userBackends]);
 
   /**
-   * Send a brand-new message using the unified /send-message endpoint.
+   * Send a brand-new message.
    */
   async function handleSendNew() {
     setStatus("Sending new message...");
     try {
-      const backendIndex = newSelectedBackend;
-      const chosen = userBackends[backendIndex];
+      const chosen = userBackends[newSelectedBackend];
       if (!chosen) throw new Error("Invalid backend index");
 
       const res = await fetch(`${chosen.base_url}/send-message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phoneNumber: newPhoneNumber, text: newMessage }),
+        body: JSON.stringify({
+          phoneNumber: newPhoneNumber,
+          text: newMessage,
+        }),
       });
       if (!res.ok) throw new Error(await res.text());
       const responseText = await res.text();
@@ -120,123 +118,176 @@ export default function UniboxClient({ userBackends }) {
   }
 
   // If user has no backends, show a simple message
-  if (!userBackends || userBackends.length === 0) {
+  if (!userBackends?.length) {
     return (
-      <div style={{ padding: 16 }}>
-        <h2>No backends found for your account.</h2>
-        <p>Add rows to your <code>backends</code> table or create a UI to do so.</p>
+      <div className="p-6">
+        <Heading>No backends found for your account.</Heading>
+        <Text>
+          Please add rows to your <code>backends</code> table or create a UI to do
+          so.
+        </Text>
       </div>
     );
   }
 
-  /**
-   * RENDER
-   */
+  // If the user selects a preview, close the "send new" form if open
+  function selectPreview(phone, backendIndex) {
+    setSelectedPhone(phone);
+    setSelectedBackendIndex(backendIndex);
+    setStatus("");
+    setShowNewForm(false);
+  }
+
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif" }}>
-      {/* LEFT SIDE: Unified Inbox + "Send New Message" */}
-      <div style={{ width: 300, borderRight: "1px solid #ccc", padding: 16 }}>
-        <h2>Unified Inbox</h2>
-        {previews.map((p, idx) => (
-          <div
-            key={idx}
-            style={{
-              marginBottom: 8,
-              padding: 8,
-              border: "1px solid #ddd",
-              cursor: "pointer",
-              fontWeight: p.unread ? "bold" : "normal",
-            }}
+    <div className="px-6 py-4 h-full w-full flex gap-6">
+      {/* LEFT COLUMN: Unified Inbox */}
+      <div className="w-80 flex-shrink-0">
+        {/* Header row: "Unified Inbox" + "Send Message" button aligned right */}
+        <div className="flex items-center justify-between mb-4">
+          <Heading level={3} className="!m-0">
+            Unified Inbox
+          </Heading>
+          <Button
+            color="cyan"
             onClick={() => {
-              setSelectedPhone(p.phoneNumber);
-              setSelectedBackendIndex(p.backendIndex);
+              // Clear conversation
+              setSelectedPhone("");
+              setSelectedBackendIndex(null);
+              setShowNewForm(true);
               setStatus("");
             }}
           >
-            <div>
-              <strong>From:</strong> {p.phoneNumber}
-            </div>
-            <div>
-              {p.snippet} {p.fromYou && "(You)"}
-            </div>
-            <div style={{ fontSize: "0.8em", color: "#666" }}>
-              {p.timestamp}
-            </div>
-            <div style={{ fontSize: "0.8em", color: "#999" }}>
-              [Backend #{p.backendIndex}]
-            </div>
-          </div>
-        ))}
+            Send Message
+          </Button>
+        </div>
 
-        <h3 style={{ marginTop: 20 }}>Send New Message</h3>
-        <label>Backend:</label>
-        <select
-          style={{ width: "100%", marginBottom: 8 }}
-          value={newSelectedBackend}
-          onChange={(e) => setNewSelectedBackend(Number(e.target.value))}
+        {/* Scrollable preview list */}
+        <div
+          className="flex flex-col gap-3 max-h-[calc(100vh-200px)] overflow-y-auto pr-1"
+          style={{
+            // Make scrollbar narrower and color it to blend in
+            scrollbarWidth: "thin",        // Firefox
+            scrollbarColor: "#666 #2f2f2f" // (thumb color) (track color)
+          }}
         >
-          {userBackends.map((b, i) => (
-            <option key={b.id} value={i}>
-              Backend #{i} - {b.base_url}
-            </option>
-          ))}
-        </select>
-
-        <label>Phone:</label>
-        <input
-          style={{ width: "100%", marginBottom: 8 }}
-          value={newPhoneNumber}
-          onChange={(e) => setNewPhoneNumber(e.target.value)}
-        />
-        <label>Message:</label>
-        <textarea
-          style={{ width: "100%", marginBottom: 8 }}
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-        />
-        <button onClick={handleSendNew} style={{ width: "100%" }}>
-          Send
-        </button>
-        <p>{status}</p>
+          {previews.map((p, idx) => {
+            const isActive =
+              p.phoneNumber === selectedPhone &&
+              p.backendIndex === selectedBackendIndex;
+            return (
+              <div
+                key={idx}
+                className={`border rounded p-4 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-800 ${
+                  isActive
+                    ? "border-blue-500 bg-zinc-50 dark:bg-zinc-800"
+                    : "border-zinc-200 dark:border-zinc-700"
+                }`}
+                onClick={() => selectPreview(p.phoneNumber, p.backendIndex)}
+              >
+                <Text className="text-sm font-medium !m-0">
+                  From: {p.phoneNumber}
+                </Text>
+                <Text
+                  className={`!mt-1 ${
+                    p.unread ? "font-bold" : "font-normal"
+                  } break-words`}
+                >
+                  {p.snippet} {p.fromYou && "(You)"}
+                </Text>
+                <Text className="text-xs text-zinc-500 !mt-1 !mb-0">
+                  {p.timestamp}
+                </Text>
+                <Text className="text-xs text-zinc-500 !m-0">
+                  [Backend #{p.backendIndex}]
+                </Text>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* RIGHT SIDE: Conversation display */}
-      <div style={{ flex: 1, padding: 16, overflowY: "auto" }}>
-        {selectedPhone && selectedBackendIndex !== null ? (
+      {/* RIGHT COLUMN: Either the conversation or the "Send new" form */}
+      <div className="flex-1">
+        {showNewForm ? (
+          // --------------- "Send New Message" form ---------------
           <>
-            <h2>
-              Conversation with {selectedPhone} (Backend #{selectedBackendIndex})
-            </h2>
-            {conversation.length === 0 ? (
-              <p>No messages yet.</p>
-            ) : (
-              conversation.map((msg, i) => (
-                <div
-                  key={i}
-                  style={{
-                    marginBottom: 8,
-                    textAlign: msg.direction === "outgoing" ? "right" : "left",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "inline-block",
-                      background: msg.direction === "outgoing" ? "#daf0ff" : "#eee",
-                      padding: 8,
-                      borderRadius: 6,
-                    }}
+            <Heading level={3}>Send a brand-new message</Heading>
+            <Fieldset className="mt-4 space-y-3">
+              <FieldGroup>
+                <Field>
+                  <Label>Backend</Label>
+                  <select
+                    className="mt-1 block w-full rounded border border-zinc-300 bg-white dark:bg-zinc-800 dark:border-zinc-700 text-sm p-2"
+                    value={newSelectedBackend}
+                    onChange={(e) => setNewSelectedBackend(Number(e.target.value))}
                   >
-                    <div style={{ fontWeight: "bold", fontSize: 12 }}>
+                    {userBackends.map((b, i) => (
+                      <option key={b.id} value={i}>
+                        Backend #{i} - {b.base_url}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field>
+                  <Label>Phone</Label>
+                  <Input
+                    className="mt-1 w-full"
+                    value={newPhoneNumber}
+                    onChange={(e) => setNewPhoneNumber(e.target.value)}
+                  />
+                </Field>
+                <Field>
+                  <Label>Message</Label>
+                  <Textarea
+                    className="mt-1 w-full"
+                    rows={5}
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                  />
+                </Field>
+              </FieldGroup>
+            </Fieldset>
+
+            <Button
+              color="cyan"
+              className="mt-3"
+              onClick={handleSendNew}
+            >
+              Send Message
+            </Button>
+            {status && (
+              <Text className="mt-2 text-sm text-rose-600 dark:text-rose-400">
+                {status}
+              </Text>
+            )}
+          </>
+        ) : selectedPhone && selectedBackendIndex != null ? (
+          // --------------- Conversation Display ---------------
+          <>
+            <Heading level={3}>
+              Conversation with {selectedPhone} (Backend #{selectedBackendIndex})
+            </Heading>
+            {conversation.length === 0 ? (
+              <Text className="mt-3">No messages yet.</Text>
+            ) : (
+              <div className="mt-3 space-y-3">
+                {conversation.map((msg, i) => (
+                  <div
+                    key={i}
+                    className="p-3 rounded bg-zinc-100 dark:bg-zinc-800"
+                  >
+                    <Text className="text-xs text-zinc-500 !mt-0 !mb-1">
                       {msg.from} ({msg.time})
-                    </div>
-                    <div>{msg.text}</div>
+                    </Text>
+                    <Text className="whitespace-pre-wrap !m-0">{msg.text}</Text>
                   </div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </>
         ) : (
-          <h2>Select a conversation.</h2>
+          // --------------- Prompt to select a conversation ---------------
+          <Heading level={3}>Select a conversation.</Heading>
         )}
       </div>
     </div>
