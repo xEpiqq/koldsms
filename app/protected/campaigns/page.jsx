@@ -88,42 +88,6 @@ export default function CampaignsPage() {
     messageContent: "",
   });
 
-  // Helpers to convert local times <-> UTC
-  function convertLocalTimeToUTC(timeStr) {
-    const [hours, minutes] = timeStr.split(":").map(Number);
-    const now = new Date();
-    now.setHours(hours, minutes, 0, 0);
-    const utcHours = now.getUTCHours();
-    const utcMinutes = now.getUTCMinutes();
-    return `${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(
-      2,
-      "0"
-    )}`;
-  }
-
-  function convertUTCToLocal(timeStr) {
-    const [utcHours, utcMinutes] = timeStr.split(":").map(Number);
-    const now = new Date();
-    // Create a Date object using UTC time components for today
-    const utcDate = new Date(
-      Date.UTC(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        utcHours,
-        utcMinutes,
-        0
-      )
-    );
-    // Convert to local time
-    const localHours = utcDate.getHours();
-    const localMinutes = utcDate.getMinutes();
-    return `${String(localHours).padStart(2, "0")}:${String(localMinutes).padStart(
-      2,
-      "0"
-    )}`;
-  }
-
   // On mount, fetch user + campaigns
   useEffect(() => {
     (async () => {
@@ -160,6 +124,42 @@ export default function CampaignsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, selectedCampaignId]);
 
+  // Helpers to convert local times <-> UTC
+  function convertLocalTimeToUTC(timeStr) {
+    const [hours, minutes] = timeStr.split(":").map(Number);
+    const now = new Date();
+    now.setHours(hours, minutes, 0, 0);
+    const utcHours = now.getUTCHours();
+    const utcMinutes = now.getUTCMinutes();
+    return `${String(utcHours).padStart(2, "0")}:${String(utcMinutes).padStart(
+      2,
+      "0"
+    )}`;
+  }
+
+  function convertUTCToLocal(timeStr) {
+    const [utcHours, utcMinutes] = timeStr.split(":").map(Number);
+    const now = new Date();
+    // Create a Date object using UTC time components for today
+    const utcDate = new Date(
+      Date.UTC(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        utcHours,
+        utcMinutes,
+        0
+      )
+    );
+    // Convert to local time
+    const localHours = utcDate.getHours();
+    const localMinutes = utcDate.getMinutes();
+    return `${String(localHours).padStart(2, "0")}:${String(localMinutes).padStart(
+      2,
+      "0"
+    )}`;
+  }
+
   async function loadCampaignDetails(campaignId) {
     // fetch the campaign
     const { data: c } = await supabase
@@ -188,7 +188,6 @@ export default function CampaignsPage() {
     }
   }
 
-  // CREATE a new campaign
   async function createCampaign() {
     if (!newCampaignName.trim()) {
       alert("Please enter a campaign name!");
@@ -214,7 +213,6 @@ export default function CampaignsPage() {
     setNewCampaignName("");
   }
 
-  // CSV parsing (kept here if you want to re-enable it or tie to "Add leads" later)
   async function handleCsvFile(file) {
     if (!file) return;
     try {
@@ -366,6 +364,194 @@ export default function CampaignsPage() {
     }
   }
 
+  // --------------------------------------------------------
+  // Additional functions to handle the triple-dot actions
+  // --------------------------------------------------------
+
+  // 1) Rename
+  async function renameCampaign(c) {
+    const newName = window.prompt("Enter a new name for this campaign:", c.name);
+    if (!newName || !newName.trim()) {
+      return; // canceled or empty
+    }
+    try {
+      const { error } = await supabase
+        .from("campaigns")
+        .update({
+          name: newName.trim(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", c.id);
+      if (error) {
+        alert("Error renaming campaign: " + error.message);
+        return;
+      }
+      alert(`Campaign renamed to: ${newName.trim()}`);
+      // Re-load campaigns list
+      const { data: refreshed, error: refreshErr } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (!refreshErr && refreshed) {
+        setCampaigns(refreshed);
+      }
+    } catch (err) {
+      alert("Unexpected error renaming campaign: " + err.message);
+    }
+  }
+
+  // 2) Delete
+  async function deleteCampaign(c) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete the campaign "${c.name}"?\nThis will also delete all associated leads and sends.`
+    );
+    if (!confirmed) return;
+
+    try {
+      // Optionally delete leads and sends. 
+      // If your DB is set up with ON CASCADE, just deleting the campaign might be enough.
+      // Here, let's do it explicitly:
+      await supabase.from("campaign_leads").delete().eq("campaign_id", c.id);
+      await supabase.from("campaign_sends").delete().eq("campaign_id", c.id);
+      const { error } = await supabase.from("campaigns").delete().eq("id", c.id);
+      if (error) {
+        alert("Error deleting campaign: " + error.message);
+        return;
+      }
+      alert(`Deleted campaign: ${c.name}`);
+      // Refresh the campaigns list
+      const { data: refreshed, error: refreshErr } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (!refreshErr && refreshed) {
+        setCampaigns(refreshed);
+      }
+    } catch (err) {
+      alert("Unexpected error deleting campaign: " + err.message);
+    }
+  }
+
+  // 3) Duplicate
+  async function duplicateCampaign(original) {
+    const confirmed = window.confirm(
+      `Duplicate the campaign "${original.name}" along with its leads?`
+    );
+    if (!confirmed) return;
+    try {
+      // Insert new campaign
+      const newCampaignName = `${original.name} (copy)`;
+      const insertData = {
+        user_id: original.user_id,
+        name: newCampaignName,
+        status: "draft",
+        daily_limit: original.daily_limit,
+        start_time: original.start_time,
+        end_time: original.end_time,
+        days_of_week: original.days_of_week,
+        message_content: original.message_content,
+      };
+      const { data: newCamp, error: campErr } = await supabase
+        .from("campaigns")
+        .insert(insertData)
+        .select()
+        .single();
+      if (campErr) {
+        alert("Error duplicating campaign: " + campErr.message);
+        return;
+      }
+      // fetch original leads
+      const { data: origLeads, error: leadErr } = await supabase
+        .from("campaign_leads")
+        .select("*")
+        .eq("campaign_id", original.id);
+      if (leadErr) {
+        alert("Error reading original leads: " + leadErr.message);
+        return;
+      }
+      if (origLeads && origLeads.length > 0) {
+        // Insert them for the new campaign
+        const leadsToInsert = origLeads.map((l) => ({
+          campaign_id: newCamp.id,
+          company_name: l.company_name,
+          created_at: new Date().toISOString(),
+          first_name: l.first_name,
+          last_name: l.last_name,
+          personalization: l.personalization,
+          phone: l.phone,
+          stop_sending: l.stop_sending,
+        }));
+        const { error: insLeadsErr } = await supabase
+          .from("campaign_leads")
+          .insert(leadsToInsert);
+        if (insLeadsErr) {
+          alert("Error inserting duplicated leads: " + insLeadsErr.message);
+          return;
+        }
+      }
+      alert(`Campaign duplicated as "${newCampaignName}".`);
+      // Refresh list
+      const { data: refreshed, error: refreshErr } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (!refreshErr && refreshed) {
+        setCampaigns(refreshed);
+      }
+    } catch (err) {
+      alert("Unexpected error duplicating campaign: " + err.message);
+    }
+  }
+
+  // 4) Download analytics CSV
+  async function downloadAnalyticsCSV(c) {
+    // For example, let's fetch campaign_sends for this campaign, turn them into CSV
+    try {
+      const { data: sends, error } = await supabase
+        .from("campaign_sends")
+        .select("*")
+        .eq("campaign_id", c.id);
+      if (error) {
+        alert("Error fetching sends: " + error.message);
+        return;
+      }
+      if (!sends || sends.length === 0) {
+        alert("No sends found for this campaign.");
+        return;
+      }
+      // Convert to CSV
+      const csv = Papa.unparse(sends, {
+        quotes: false,
+        delimiter: ",",
+        newline: "\r\n",
+      });
+      // Create a Blob, download it
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `campaign_${c.id}_analytics.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      alert("Error exporting CSV: " + err.message);
+    }
+  }
+
+  // 5) Share campaign
+  function shareCampaign(c) {
+    // For a real app, you might generate a public link or a shared token.
+    // We'll just do a quick alert with an example link
+    alert(
+      `Share link for campaign "${c.name}":\n` +
+        `https://yourapp.example.com/public-campaign?c=${c.id}`
+    );
+  }
+
   if (!user) {
     return (
       <div style={{ padding: "1rem" }}>
@@ -441,30 +627,59 @@ export default function CampaignsPage() {
                   <TableCell>{clickCount > 0 ? clickCount : "-"}</TableCell>
                   <TableCell>{repliedCount > 0 ? repliedCount : "-"}</TableCell>
 
-                  {/* Stop event in actions cell so it doesn't open wizard */}
+                  {/* Actions dropdown */}
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     <Dropdown>
                       <DropdownButton plain aria-label="More options">
                         <EllipsisHorizontalIcon className="size-5" />
                       </DropdownButton>
                       <DropdownMenu>
-                        <DropdownItem>
+                        <DropdownItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            renameCampaign(c);
+                          }}
+                        >
                           <PencilIcon className="size-4" />
                           <DropdownLabel>Rename</DropdownLabel>
                         </DropdownItem>
-                        <DropdownItem>
+
+                        <DropdownItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteCampaign(c);
+                          }}
+                        >
                           <TrashIcon className="size-4" />
                           <DropdownLabel>Delete</DropdownLabel>
                         </DropdownItem>
-                        <DropdownItem>
+
+                        <DropdownItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            duplicateCampaign(c);
+                          }}
+                        >
                           <DocumentDuplicateIcon className="size-4" />
                           <DropdownLabel>Duplicate campaign</DropdownLabel>
                         </DropdownItem>
-                        <DropdownItem>
+
+                        <DropdownItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            downloadAnalyticsCSV(c);
+                          }}
+                        >
                           <ArrowDownTrayIcon className="size-4" />
                           <DropdownLabel>Download analytics CSV</DropdownLabel>
                         </DropdownItem>
-                        <DropdownItem>
+
+                        <DropdownItem
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            shareCampaign(c);
+                          }}
+                        >
                           <ShareIcon className="size-4" />
                           <DropdownLabel>Share Campaign</DropdownLabel>
                         </DropdownItem>
@@ -576,11 +791,8 @@ export default function CampaignsPage() {
         {wizardStep === "leads" && (
           <div style={{ marginTop: "2rem" }}>
             <Subheading>Leads</Subheading>
-            <Text className="mt-2">
-              {leads.length} leads in this campaign.
-            </Text>
+            <Text className="mt-2">{leads.length} leads in this campaign.</Text>
 
-            {/* Just the leads table, no CSV UI here */}
             {leads.length > 0 ? (
               <div style={{ marginTop: "2rem" }}>
                 <Table
